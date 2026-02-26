@@ -111,26 +111,31 @@ function buildVolumeMounts(
   fs.mkdirSync(groupSessionsDir, { recursive: true });
   const settingsFile = path.join(groupSessionsDir, 'settings.json');
   if (!fs.existsSync(settingsFile)) {
-    fs.writeFileSync(
-      settingsFile,
-      JSON.stringify(
-        {
-          env: {
-            // Enable agent swarms (subagent orchestration)
-            // https://code.claude.com/docs/en/agent-teams#orchestrate-teams-of-claude-code-sessions
-            CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-            // Load CLAUDE.md from additional mounted directories
-            // https://code.claude.com/docs/en/memory#load-memory-from-additional-directories
-            CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
-            // Enable Claude's memory feature (persists user preferences between sessions)
-            // https://code.claude.com/docs/en/memory#manage-auto-memory
-            CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
-          },
-        },
-        null,
-        2,
-      ) + '\n',
-    );
+    // Read optional model overrides from .env (non-secret, safe for settings.json)
+    const modelEnv = readEnvFile([
+      'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+      'ANTHROPIC_DEFAULT_SONNET_MODEL',
+      'ANTHROPIC_DEFAULT_OPUS_MODEL',
+    ]);
+    const env: Record<string, string> = {
+      // Enable agent swarms (subagent orchestration)
+      // https://code.claude.com/docs/en/agent-teams#orchestrate-teams-of-claude-code-sessions
+      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+      // Load CLAUDE.md from additional mounted directories
+      // https://code.claude.com/docs/en/memory#load-memory-from-additional-directories
+      CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
+      // Enable Claude's memory feature (persists user preferences between sessions)
+      // https://code.claude.com/docs/en/memory#manage-auto-memory
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+      // Enable background tasks (subagent parallel execution)
+      ENABLE_BACKGROUND_TASKS: '1',
+      // Output token limits for longer responses
+      CLAUDE_CODE_MAX_OUTPUT_TOKENS: '64000',
+      MAX_MCP_OUTPUT_TOKENS: '64000',
+      // Apply model overrides from .env (if set)
+      ...modelEnv,
+    };
+    fs.writeFileSync(settingsFile, JSON.stringify({ env }, null, 2) + '\n');
   }
 
   // Sync skills from container/skills/ into each group's .claude/skills/
@@ -200,11 +205,18 @@ function buildVolumeMounts(
 }
 
 /**
- * Read allowed secrets from .env for passing to the container via stdin.
- * Secrets are never written to disk or mounted as files.
+ * Read allowed secrets and API config from .env for passing to the container via stdin.
+ * These values are injected into the SDK's env at runtime (memory-only) — never written
+ * to disk or mounted as files. Includes auth tokens AND API endpoint config so that
+ * alternative providers (e.g. Zhipu GLM via Anthropic-compatible proxy) work transparently.
  */
 function readSecrets(): Record<string, string> {
-  return readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
+  return readEnvFile([
+    'CLAUDE_CODE_OAUTH_TOKEN',
+    'ANTHROPIC_API_KEY',
+    'ANTHROPIC_AUTH_TOKEN',
+    'ANTHROPIC_BASE_URL',
+  ]);
 }
 
 function buildContainerArgs(

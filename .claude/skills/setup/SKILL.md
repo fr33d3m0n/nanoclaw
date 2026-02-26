@@ -73,15 +73,80 @@ Run `npx tsx setup/index.ts --step container -- --runtime <chosen>` and parse th
 
 **If TEST_OK=false but BUILD_OK=true:** The image built but won't run. Check logs — common cause is runtime not fully started. Wait a moment and retry the test.
 
-## 4. Claude Authentication (No Script)
+## 4. Authentication & Model Provider
 
-If HAS_ENV=true from step 2, read `.env` and check for `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`. If present, confirm with user: keep or reconfigure?
+If HAS_ENV=true from step 2, read `.env` and check for existing auth tokens (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`) and endpoint config (`ANTHROPIC_BASE_URL`). If present, confirm with user: keep or reconfigure?
+
+### 4a. Choose Provider
+
+AskUserQuestion: Which AI model provider?
+- **Anthropic Claude** (default) — direct Anthropic API
+- **Zhipu GLM** — via Anthropic-compatible proxy at `open.bigmodel.cn`
+- **Other Anthropic-compatible provider** — custom endpoint
+
+### 4b. Configure Authentication
+
+**Anthropic Claude (default):**
 
 AskUserQuestion: Claude subscription (Pro/Max) vs Anthropic API key?
 
-**Subscription:** Tell user to run `claude setup-token` in another terminal, copy the token, add `CLAUDE_CODE_OAUTH_TOKEN=<token>` to `.env`. Do NOT collect the token in chat.
+- **Subscription:** Tell user to run `claude setup-token` in another terminal, copy the token, add `CLAUDE_CODE_OAUTH_TOKEN=<token>` to `.env`. Do NOT collect the token in chat.
+- **API key:** Tell user to add `ANTHROPIC_API_KEY=<key>` to `.env`.
 
-**API key:** Tell user to add `ANTHROPIC_API_KEY=<key>` to `.env`.
+No additional endpoint config needed — Claude uses default API URL.
+
+**Zhipu GLM:**
+
+AskUserQuestion: Please provide your Zhipu API key.
+
+Add to `.env`:
+```
+ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/anthropic
+ANTHROPIC_AUTH_TOKEN=<user's key>
+```
+
+**Other provider:**
+
+AskUserQuestion: What is the API base URL? (must implement Anthropic Messages API)
+AskUserQuestion: What authentication token to use?
+
+Add to `.env`:
+```
+ANTHROPIC_BASE_URL=<provided URL>
+ANTHROPIC_AUTH_TOKEN=<provided token>
+```
+
+### 4c. Configure Model Names
+
+**Anthropic Claude:** Skip this step — Claude Code uses built-in defaults.
+
+**Alternative providers:** AskUserQuestion: What model name(s) should be used? (same for all tiers, or different per tier?)
+
+Common configurations:
+
+| Provider | Haiku | Sonnet | Opus |
+|----------|-------|--------|------|
+| Zhipu GLM-5 | glm-5 | glm-5 | glm-5 |
+| Zhipu GLM-4 | glm-4-flash | glm-4 | glm-4-plus |
+
+Add model overrides to `.env`:
+```
+ANTHROPIC_DEFAULT_HAIKU_MODEL=<model>
+ANTHROPIC_DEFAULT_SONNET_MODEL=<model>
+ANTHROPIC_DEFAULT_OPUS_MODEL=<model>
+```
+
+These are read by `container-runner.ts` and written to each group's `settings.json` on first container start.
+
+### 4d. Apply to Existing Groups (if any)
+
+If groups already exist with `settings.json` files (check `data/sessions/*/. claude/settings.json`), update each file to include the new model overrides. Preserve existing settings.
+
+```bash
+find data/sessions -name settings.json -path '*/.claude/*' 2>/dev/null
+```
+
+For each file: read JSON → merge model env vars → write back.
 
 ## 5. WhatsApp Authentication
 

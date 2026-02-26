@@ -6,6 +6,7 @@ import {
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
+  STORE_DIR,
   TRIGGER_PATTERN,
 } from './config.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
@@ -51,7 +52,7 @@ let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
 
-let whatsapp: WhatsAppChannel;
+let whatsapp: WhatsAppChannel | undefined;
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 
@@ -474,10 +475,16 @@ async function main(): Promise<void> {
     registeredGroups: () => registeredGroups,
   };
 
-  // Create and connect channels
-  whatsapp = new WhatsAppChannel(channelOpts);
-  channels.push(whatsapp);
-  await whatsapp.connect();
+  // Create and connect channels (WhatsApp is optional — skipped if no auth state)
+  const hasWhatsAppAuth = fs.existsSync(path.join(STORE_DIR, 'auth', 'creds.json'));
+  if (hasWhatsAppAuth) {
+    whatsapp = new WhatsAppChannel(channelOpts);
+    channels.push(whatsapp);
+    await whatsapp.connect();
+  } else {
+    logger.warn('No WhatsApp auth found (store/auth/creds.json missing). Starting without WhatsApp channel.');
+    logger.warn('Run /setup to authenticate WhatsApp, or add another channel.');
+  }
 
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
