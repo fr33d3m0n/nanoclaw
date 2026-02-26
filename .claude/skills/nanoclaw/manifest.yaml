@@ -1,0 +1,22 @@
+skill: nanoclaw
+version: 1.0.0
+description: "CLI channel for Claude Code integration with multi-session support"
+
+adds:
+  - src/channels/cli.ts
+  - scripts/nanoclaw-cli.sh
+
+modifies:
+  - src/db.ts
+  - src/index.ts
+
+env_additions: []
+
+# No npm dependencies required
+npm_dependencies: {}
+
+# Hooks to run after applying the skill
+hooks:
+  post_apply:
+    - "chmod +x scripts/nanoclaw-cli.sh"
+    - "npm run build"

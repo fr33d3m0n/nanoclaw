@@ -10,6 +10,7 @@ import {
   TRIGGER_PATTERN,
 } from './config.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
+import { CLIChannel } from './channels/cli.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -53,6 +54,7 @@ let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
 
 let whatsapp: WhatsAppChannel | undefined;
+let cliChannel: CLIChannel | undefined;
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 
@@ -285,6 +287,11 @@ async function runAgent(
         if (output.newSessionId) {
           sessions[group.folder] = output.newSessionId;
           setSession(group.folder, output.newSessionId);
+
+          // For CLI group, also update cli_sessions table
+          if (group.folder === 'cli' && cliChannel) {
+            cliChannel.syncSession(output.newSessionId);
+          }
         }
         await onOutput(output);
       }
@@ -484,6 +491,22 @@ async function main(): Promise<void> {
   } else {
     logger.warn('No WhatsApp auth found (store/auth/creds.json missing). Starting without WhatsApp channel.');
     logger.warn('Run /setup to authenticate WhatsApp, or add another channel.');
+  }
+
+  // CLI channel for Claude Code skill integration
+  cliChannel = new CLIChannel(channelOpts.onMessage, channelOpts.onChatMetadata);
+  channels.push(cliChannel);
+  await cliChannel.connect();
+
+  // Register CLI group if not exists
+  if (!registeredGroups['cli:default']) {
+    registerGroup('cli:default', {
+      name: 'CLI',
+      folder: 'cli',
+      trigger: '.*',
+      added_at: new Date().toISOString(),
+      requiresTrigger: false,
+    });
   }
 
   // Start subsystems (independently of connection handler)
