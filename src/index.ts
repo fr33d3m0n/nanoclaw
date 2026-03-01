@@ -7,10 +7,13 @@ import {
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
   STORE_DIR,
+  TELEGRAM_BOT_TOKEN,
+  TELEGRAM_ONLY,
   TRIGGER_PATTERN,
 } from './config.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
 import { CLIChannel } from './channels/cli.js';
+import { TelegramChannel } from './channels/telegram.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -482,15 +485,24 @@ async function main(): Promise<void> {
     registeredGroups: () => registeredGroups,
   };
 
-  // Create and connect channels (WhatsApp is optional — skipped if no auth state)
-  const hasWhatsAppAuth = fs.existsSync(path.join(STORE_DIR, 'auth', 'creds.json'));
-  if (hasWhatsAppAuth) {
-    whatsapp = new WhatsAppChannel(channelOpts);
-    channels.push(whatsapp);
-    await whatsapp.connect();
-  } else {
-    logger.warn('No WhatsApp auth found (store/auth/creds.json missing). Starting without WhatsApp channel.');
-    logger.warn('Run /setup to authenticate WhatsApp, or add another channel.');
+  // Create and connect channels (WhatsApp is optional — skipped if no auth state or TELEGRAM_ONLY)
+  if (!TELEGRAM_ONLY) {
+    const hasWhatsAppAuth = fs.existsSync(path.join(STORE_DIR, 'auth', 'creds.json'));
+    if (hasWhatsAppAuth) {
+      whatsapp = new WhatsAppChannel(channelOpts);
+      channels.push(whatsapp);
+      await whatsapp.connect();
+    } else {
+      logger.warn('No WhatsApp auth found (store/auth/creds.json missing). Starting without WhatsApp channel.');
+      logger.warn('Run /setup to authenticate WhatsApp, or add another channel.');
+    }
+  }
+
+  // Telegram channel (if bot token is configured)
+  if (TELEGRAM_BOT_TOKEN) {
+    const telegram = new TelegramChannel(TELEGRAM_BOT_TOKEN, channelOpts);
+    channels.push(telegram);
+    await telegram.connect();
   }
 
   // CLI channel for Claude Code skill integration
