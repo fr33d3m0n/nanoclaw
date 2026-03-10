@@ -82,6 +82,20 @@ function createSchema(database: Database.Database): void {
       container_config TEXT,
       requires_trigger INTEGER DEFAULT 1
     );
+
+    CREATE TABLE IF NOT EXISTS cli_sessions (
+      id TEXT PRIMARY KEY,
+      sdk_session_id TEXT NOT NULL UNIQUE,
+      name TEXT,
+      summary TEXT,
+      first_prompt TEXT,
+      created_at TEXT NOT NULL,
+      last_used_at TEXT NOT NULL,
+      is_active INTEGER DEFAULT 1,
+      message_count INTEGER DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_cli_sessions_last_used ON cli_sessions(last_used_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cli_sessions_active ON cli_sessions(is_active);
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -632,6 +646,193 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     };
   }
   return result;
+}
+
+// --- CLI session accessors ---
+
+export interface CLISessionInfo {
+  id: string;
+  sdkSessionId: string;
+  name?: string;
+  summary?: string;
+  firstPrompt?: string;
+  createdAt: string;
+  lastUsedAt: string;
+  isActive: boolean;
+  messageCount: number;
+}
+
+function mapCLISessionRow(row: {
+  id: string;
+  sdk_session_id: string;
+  name: string | null;
+  summary: string | null;
+  first_prompt: string | null;
+  created_at: string;
+  last_used_at: string;
+  is_active: number;
+  message_count: number;
+}): CLISessionInfo {
+  return {
+    id: row.id,
+    sdkSessionId: row.sdk_session_id,
+    name: row.name ?? undefined,
+    summary: row.summary ?? undefined,
+    firstPrompt: row.first_prompt ?? undefined,
+    createdAt: row.created_at,
+    lastUsedAt: row.last_used_at,
+    isActive: row.is_active === 1,
+    messageCount: row.message_count,
+  };
+}
+
+type CLISessionRow = {
+  id: string;
+  sdk_session_id: string;
+  name: string | null;
+  summary: string | null;
+  first_prompt: string | null;
+  created_at: string;
+  last_used_at: string;
+  is_active: number;
+  message_count: number;
+};
+
+export function listCLISessions(): CLISessionInfo[] {
+  const rows = db
+    .prepare(
+      `SELECT id, sdk_session_id, name, summary, first_prompt,
+              created_at, last_used_at, is_active, message_count
+       FROM cli_sessions
+       WHERE is_active = 1
+       ORDER BY last_used_at DESC`,
+    )
+    .all() as CLISessionRow[];
+  return rows.map(mapCLISessionRow);
+}
+
+export function getCurrentCLISessionId(): string | undefined {
+  const row = db
+    .prepare(
+      `SELECT sdk_session_id FROM cli_sessions
+       WHERE is_active = 1
+       ORDER BY last_used_at DESC
+       LIMIT 1`,
+    )
+    .get() as { sdk_session_id: string } | undefined;
+  return row?.sdk_session_id;
+}
+
+export function getCurrentCLISession(): CLISessionInfo | undefined {
+  const row = db
+    .prepare(
+      `SELECT id, sdk_session_id, name, summary, first_prompt,
+              created_at, last_used_at, is_active, message_count
+       FROM cli_sessions
+       WHERE is_active = 1
+       ORDER BY last_used_at DESC
+       LIMIT 1`,
+    )
+    .get() as CLISessionRow | undefined;
+  if (!row) return undefined;
+  return mapCLISessionRow(row);
+}
+
+export function selectCLISession(
+  sessionId: string,
+): CLISessionInfo | undefined {
+  const row = db
+    .prepare(
+      `SELECT id, sdk_session_id, name, summary, first_prompt,
+              created_at, last_used_at, is_active, message_count
+       FROM cli_sessions
+       WHERE (id = ? OR sdk_session_id = ?) AND is_active = 1`,
+    )
+    .get(sessionId, sessionId) as CLISessionRow | undefined;
+
+  if (!row) return undefined;
+
+  const now = new Date().toISOString();
+  db.prepare(`UPDATE cli_sessions SET last_used_at = ? WHERE id = ?`).run(
+    now,
+    row.id,
+  );
+  setSession('cli', row.sdk_session_id);
+
+  return mapCLISessionRow({ ...row, last_used_at: now });
+}
+
+export function createCLISession(
+  sdkSessionId: string,
+  firstPrompt?: string,
+  summary?: string,
+): CLISessionInfo {
+  let id = sdkSessionId.slice(0, 8);
+  const now = new Date().toISOString();
+
+  for (let len = 8; len <= sdkSessionId.length; len += 4) {
+    try {
+      db.prepare(
+        `INSERT INTO cli_sessions (id, sdk_session_id, first_prompt, summary, created_at, last_used_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(id, sdkSessionId, firstPrompt ?? null, summary ?? null, now, now);
+      break;
+    } catch (err: any) {
+      if (
+        err.code === 'SQLITE_CONSTRAINT_PRIMARYKEY' ||
+        err.message?.includes('UNIQUE')
+      ) {
+        id = sdkSessionId.slice(0, Math.min(len + 4, sdkSessionId.length));
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  setSession('cli', sdkSessionId);
+
+  return {
+    id,
+    sdkSessionId,
+    firstPrompt,
+    summary,
+    createdAt: now,
+    lastUsedAt: now,
+    isActive: true,
+    messageCount: 0,
+  };
+}
+
+export function updateCLISession(
+  sdkSessionId: string,
+  updates: { summary?: string; messageCount?: number },
+): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE cli_sessions
+     SET summary = COALESCE(?, summary),
+         message_count = COALESCE(?, message_count),
+         last_used_at = ?
+     WHERE sdk_session_id = ?`,
+  ).run(
+    updates.summary ?? null,
+    updates.messageCount ?? null,
+    now,
+    sdkSessionId,
+  );
+}
+
+export function endCurrentCLISession(): CLISessionInfo | undefined {
+  const current = getCurrentCLISession();
+  if (!current) return undefined;
+
+  db.prepare(
+    `UPDATE cli_sessions SET is_active = 0 WHERE sdk_session_id = ?`,
+  ).run(current.sdkSessionId);
+
+  db.prepare(`DELETE FROM sessions WHERE group_folder = 'cli'`).run();
+
+  return { ...current, isActive: false };
 }
 
 // --- JSON migration ---
