@@ -62,9 +62,11 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// \b only works for ASCII word boundaries — fails for CJK names.
+// Use lookahead: trigger must be followed by whitespace, punctuation, or end-of-string.
 export const TRIGGER_PATTERN = new RegExp(
-  `^@${escapeRegex(ASSISTANT_NAME)}\\b`,
-  'i',
+  `^@${escapeRegex(ASSISTANT_NAME)}(?=[\\s\\p{P}]|$)`,
+  'iu',
 );
 
 // Timezone for scheduled tasks (cron expressions, etc.)
