@@ -8,6 +8,7 @@ import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
+import { handleSkillAudit, SkillAuditRequest } from './skill-audit-handler.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
@@ -413,6 +414,19 @@ export async function processTaskIpc(
           'Unauthorized refresh_groups attempt blocked',
         );
       }
+      break;
+
+    case 'skill_audit':
+      // Fire-and-forget: skill-audit runs in background (can take 10+ minutes).
+      // Results are written to the group's IPC results directory.
+      // handleSkillAudit performs its own runtime type validation on the data.
+      handleSkillAudit(
+        data as unknown as SkillAuditRequest,
+        sourceGroup,
+        isMain,
+      ).catch((err) => {
+        logger.error({ err, sourceGroup }, 'skill_audit IPC handler failed');
+      });
       break;
 
     case 'register_group':
